@@ -1,94 +1,141 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { InterviewState, Question, Answer } from '../types';
+import { InterviewSession, InterviewQuestion, InterviewAnswer, InterviewState } from '../types';
 
 const initialState: InterviewState = {
-  currentQuestion: 0,
-  questions: [],
-  answers: [],
+  currentSession: null,
+  allSessions: [],
+  selectedSubject: 'React Developer',
   isActive: false,
   isPaused: false,
-  timeRemaining: 0,
-  currentCandidateId: null,
-  status: 'not-started'
 };
 
 const interviewSlice = createSlice({
   name: 'interview',
   initialState,
   reducers: {
-    // Start interview with questions
-    startInterview: (state, action: PayloadAction<{questions: Question[]; candidateId: string}>) => {
-      const { questions, candidateId } = action.payload;
-      state.questions = questions;
-      state.currentQuestion = 0;
-      state.answers = [];
+    startInterview: (state, action: PayloadAction<InterviewSession>) => {
+      state.currentSession = action.payload;
       state.isActive = true;
       state.isPaused = false;
-      state.status = 'in-progress';
-      state.currentCandidateId = candidateId;
-      state.timeRemaining = questions[0]?.timeLimit || 60;
-      
-      console.log('🚀 Interview started with', questions.length, 'questions');
+      console.log('🚀 [INTERVIEW] Started interview for:', action.payload.candidateName);
     },
-    
-    // Submit current answer and move to next
-    submitAnswer: (state, action: PayloadAction<{answer: string; timeUsed: number; score?: number}>) => {
-      const currentQ = state.questions[state.currentQuestion];
-      const newAnswer: Answer = {
-        question: currentQ.question,
-        answer: action.payload.answer,
-        score: action.payload.score || 0,
-        timeUsed: action.payload.timeUsed,
-        maxTime: currentQ.timeLimit
-      };
-      
-      state.answers.push(newAnswer);
-      console.log('✅ Answer submitted for question', state.currentQuestion + 1);
-      
-      // Move to next question or complete interview
-      if (state.currentQuestion < state.questions.length - 1) {
-        state.currentQuestion++;
-        state.timeRemaining = state.questions[state.currentQuestion].timeLimit;
-        console.log('➡️ Moving to question', state.currentQuestion + 1);
-      } else {
-        state.isActive = false;
-        state.status = 'completed';
-        console.log('🎉 Interview completed!');
+
+    submitAnswer: (state, action: PayloadAction<InterviewAnswer>) => {
+      if (state.currentSession) {
+        state.currentSession.answers.push(action.payload);
+        state.currentSession.currentQuestionIndex++;
+        
+        // Check if interview is complete
+        if (state.currentSession.currentQuestionIndex >= state.currentSession.questions.length) {
+          state.currentSession.status = 'completed';
+          state.currentSession.completedAt = new Date().toISOString();
+          
+          // Calculate scores
+          const totalScore = state.currentSession.answers.reduce((sum, ans) => sum + ans.score, 0);
+          state.currentSession.totalScore = totalScore;
+          state.currentSession.averageScore = Math.round(totalScore / state.currentSession.answers.length);
+          
+          state.isActive = false;
+          console.log('✅ [INTERVIEW] Interview completed with average score:', state.currentSession.averageScore);
+        } else {
+          // Set time for next question
+          const nextQuestion = state.currentSession.questions[state.currentSession.currentQuestionIndex];
+          state.currentSession.timeRemaining = nextQuestion.timeLimit;
+        }
       }
     },
-    
-    // Update timer
+
     updateTimer: (state, action: PayloadAction<number>) => {
-      state.timeRemaining = action.payload;
+      if (state.currentSession && state.isActive && !state.isPaused) {
+        state.currentSession.timeRemaining = Math.max(0, action.payload);
+      }
     },
-    
-    // Pause/Resume interview
+
     pauseInterview: (state) => {
       state.isPaused = true;
-      state.status = 'paused';
-      console.log('⏸️ Interview paused');
+      if (state.currentSession) {
+        state.currentSession.status = 'paused';
+      }
+      console.log('⏸️ [INTERVIEW] Interview paused');
     },
-    
+
     resumeInterview: (state) => {
       state.isPaused = false;
-      state.status = 'in-progress';
-      console.log('▶️ Interview resumed');
+      if (state.currentSession) {
+        state.currentSession.status = 'in-progress';
+      }
+      console.log('▶️ [INTERVIEW] Interview resumed');
     },
+
+completeInterview: (state) => {
+  if (state.currentSession) {
+    state.currentSession.status = 'completed';
+    state.currentSession.completedAt = new Date().toISOString();
     
-    // Reset interview state
+    // ✅ FIXED: Proper score calculation including zeros
+    const answers = state.currentSession.answers;
+    const totalScore = answers.reduce((sum, ans) => sum + (ans.score || 0), 0);
+    
+    // ✅ Handle case where no valid answers
+    const validAnswerCount = answers.length;
+    const averageScore = validAnswerCount > 0 
+      ? Math.round(totalScore / validAnswerCount) 
+      : 0; // ✅ If no answers, score is 0
+    
+    state.currentSession.totalScore = totalScore;
+    state.currentSession.averageScore = averageScore;
+    
+    console.log(`🏁 [INTERVIEW] Completed - Total: ${totalScore}, Average: ${averageScore}%, Answers: ${validAnswerCount}`);
+            
+            // 🔧 FIX: Calculate final scores if not already done
+            if (!state.currentSession.averageScore || state.currentSession.averageScore === 0) {
+            const totalScore = state.currentSession.answers.reduce((sum, ans) => sum + ans.score, 0);
+            state.currentSession.totalScore = totalScore;
+            state.currentSession.averageScore = Math.round(totalScore / state.currentSession.answers.length);
+            }
+            
+            // 🔧 FIX: Ensure allSessions is initialized before pushing
+            if (!state.allSessions) {
+            console.warn('⚠️ [INTERVIEW] allSessions was undefined, initializing...');
+            state.allSessions = [];
+            }
+            
+            // Save completed session
+            state.allSessions.push(state.currentSession);
+            
+            console.log('🏁 [INTERVIEW] Interview completed and saved');
+            console.log('📊 [INTERVIEW] Average Score:', state.currentSession.averageScore);
+            console.log('💾 [INTERVIEW] Total sessions saved:', state.allSessions.length);
+            
+            // Clear active session
+            state.currentSession = null;
+            state.isActive = false;
+            state.isPaused = false;
+        }
+    },
+
+    setSelectedSubject: (state, action: PayloadAction<string>) => {
+      state.selectedSubject = action.payload;
+      console.log('📚 [INTERVIEW] Subject changed to:', action.payload);
+    },
+
     resetInterview: (state) => {
-      Object.assign(state, initialState);
-      console.log('🔄 Interview reset');
+      state.currentSession = null;
+      state.isActive = false;
+      state.isPaused = false;
+      console.log('🔄 [INTERVIEW] Interview reset');
     }
-  }
+  },
 });
 
 export const {
   startInterview,
-  submitAnswer, 
+  submitAnswer,
   updateTimer,
   pauseInterview,
   resumeInterview,
+  completeInterview,
+  setSelectedSubject,
   resetInterview
 } = interviewSlice.actions;
 

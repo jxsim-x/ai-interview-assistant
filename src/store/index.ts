@@ -8,8 +8,32 @@ import interviewReducer from './interviewSlice';
 const persistConfig = {
   key: 'ai-interview-assistant',
   storage,
-  whitelist: ['candidates', 'interview'], // Only persist these slices
+  version: 1, // 🔧 ADD: Version for migration tracking
+  whitelist: ['candidates', 'interview'],
+  // 🔧 ADD: Migration to fix corrupted state
+  migrate: (state: any) => {
+    console.log('🔄 [STORE] Running state migration check...');
+    
+    if (state && state._persist) {
+      // Fix corrupted allSessions array
+      if (state.interview && !Array.isArray(state.interview.allSessions)) {
+        console.warn('⚠️ [STORE] Fixing corrupted allSessions - was:', typeof state.interview.allSessions);
+        state.interview.allSessions = [];
+      }
+      
+      // Fix corrupted candidates list
+      if (state.candidates && !Array.isArray(state.candidates.list)) {
+        console.warn('⚠️ [STORE] Fixing corrupted candidates list - was:', typeof state.candidates.list);
+        state.candidates.list = [];
+      }
+      
+      console.log('✅ [STORE] State migration completed successfully');
+    }
+    
+    return Promise.resolve(state);
+  }
 };
+
 
 // Combine all reducers
 const rootReducer = combineReducers({

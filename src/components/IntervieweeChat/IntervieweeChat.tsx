@@ -13,7 +13,8 @@ import {
   Progress,
   Divider,
   message,
-  Modal
+  Modal,
+  Result
 } from 'antd';
 
 import {
@@ -23,7 +24,8 @@ import {
   PhoneOutlined,
   RocketOutlined,
   ReloadOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 
 import { useDispatch, useSelector } from 'react-redux';
@@ -36,6 +38,10 @@ import {
 } from '../../store/candidatesSlice';
 import { ResumeParser } from '../../utils/resumeParser';
 import type { UploadFile } from 'antd/es/upload';
+import { v4 as uuidv4 } from 'uuid';
+import { startInterview } from '../../store/interviewSlice';
+import { geminiService } from '../../services/geminiService';
+import { resumeStorage } from '../../utils/resumeStorage';
 
 const { Title, Text } = Typography;
 
@@ -54,6 +60,9 @@ const IntervieweeChat: React.FC = () => {
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
   const [isSubmittingForm, setIsSubmittingForm] = useState(false);
   const [form] = Form.useForm();
+  const [isStartingInterview, setIsStartingInterview] = useState(false);
+  const selectedSubject = useSelector((state: RootState) => state.interview.selectedSubject);
+  const isInterviewActive = useSelector((state: RootState) => state.interview.isActive);
 
   // 🔧 FIX: New state flags to control workflow
   const [isEditMode, setIsEditMode] = useState(false);
@@ -80,6 +89,29 @@ const IntervieweeChat: React.FC = () => {
       }
     };
   }, []);
+useEffect(() => {
+  if (currentCandidate && !hasInitialized.current) {
+    console.log('🔄 [RELOAD] Restoring session for:', currentCandidate.name);
+    
+    // Determine what step to show based on candidate status
+    if (currentCandidate.status === 'completed') {
+      // Show completion screen
+      setCurrentStep(2);
+    } else if (currentCandidate.status === 'not-started') {
+      // Show start interview screen
+      setCurrentStep(2);
+      message.info(`Welcome back, ${currentCandidate.name}! Ready to start?`);
+    } else if (currentCandidate.status === 'in-progress' || currentCandidate.status === 'paused') {
+      // Interview was in progress - show start screen with resume option
+      setCurrentStep(2);
+      Modal.info({
+        title: '🔄 Session Restored',
+        content: `Welcome back, ${currentCandidate.name}! Your session has been restored. You can resume your interview.`,
+        okText: 'Got it'
+      });
+    }
+  }
+}, [currentCandidate]);
 
   // 🔧 FIX: Enhanced state cleanup - only clear if dashboard is actually empty
   useEffect(() => {
@@ -98,9 +130,6 @@ const IntervieweeChat: React.FC = () => {
       }
     }
   }, [allCandidates.length, currentCandidate, dispatch]);
-
-  // 🔧 FIX: Completely removed automatic modal triggering - only manual triggers now
-  // This was causing the unwanted modals in fresh uploads
 
   // Form pre-filling with better timing
   useEffect(() => {
@@ -158,7 +187,7 @@ const IntervieweeChat: React.FC = () => {
             name: uploadedFile.name,
             type: uploadedFile.type,
             size: uploadedFile.size,
-            url: URL.createObjectURL(uploadedFile),
+            storageId: `resume_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             uploadedAt: new Date().toISOString()
         } : undefined
         }));
@@ -228,10 +257,17 @@ const IntervieweeChat: React.FC = () => {
   // 🔧 FIX: File upload with proper workflow control
   const handleFileUpload = async (file: any): Promise<boolean> => {
     console.log('📁 [FIXED] File selected:', file.name, 'Edit mode:', isEditMode);
-
+    if (currentCandidate && currentCandidate.status === 'completed') {
+        console.log('🧹 [CHAT] Previous interview completed, resetting for new candidate');
+        dispatch(resetCurrentSession()); // ✅ Use correct action name
+        setCurrentStep(0);
+        setParsedData(null); // ✅ Use correct state variable
+        setUploadedFile(null); // ✅ Clear uploaded file
+    }
+    
     // Clear any existing debounce
     if (uploadDebounce.current) {
-      clearTimeout(uploadDebounce.current);
+        clearTimeout(uploadDebounce.current);
     }
 
     // Validate file
@@ -367,77 +403,143 @@ const IntervieweeChat: React.FC = () => {
   };
 
   // 🔧 FIX: Form submission with proper workflow handling
-  const handleSubmitInfo = async (values: any) => {
-    console.log('📝 [FIXED] Submitting candidate info:', values, 'Edit mode:', isEditMode);
+const handleSubmitInfo = async (values: any) => {
+  console.log('📝 [FIXED] Submitting candidate info:', values, 'Edit mode:', isEditMode);
+  setIsSubmittingForm(true);
 
-    setIsSubmittingForm(true);
+  try {
+    // ✅ SAVE FILE TO INDEXED DB
+    let resumeFileData = undefined;
+    
+    if (uploadedFile) {
+      const fileId = `resume_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await resumeStorage.saveResume(fileId, uploadedFile);
+      
+      resumeFileData = {
+        name: uploadedFile.name,
+        type: uploadedFile.type,
+        size: uploadedFile.size,
+        storageId: fileId, // ✅ Store IndexedDB ID instead of blob URL
+        uploadedAt: new Date().toISOString()
+      };
+      
+      console.log('💾 [STORAGE] Resume saved with ID:', fileId);
+    }
 
-    try {
-      if (isEditMode && currentCandidate) {
-        // Update existing candidate
-        dispatch(updateCandidate({
-          id: currentCandidate.id,
-          updates: {
-            name: values.name,
-            email: values.email,
-            phone: values.phone,
-            resumeText: parsedData?.fullText || currentCandidate.resumeText || '',
-            resumeFile: uploadedFile ? {
-              name: uploadedFile.name,
-              type: uploadedFile.type,
-              size: uploadedFile.size,
-              url: URL.createObjectURL(uploadedFile),
-              uploadedAt: new Date().toISOString()
-              } : parsedData?.resumeFile || currentCandidate?.resumeFile
-            }
-        }));
-        console.log('✅ [FIXED] Updated existing candidate');
-        message.success('Information updated successfully!');
-      } else {
-        // Add new candidate
-        dispatch(addCandidate({
+    if (isEditMode && currentCandidate) {
+      // Update existing candidate
+      dispatch(updateCandidate({
+        id: currentCandidate.id,
+        updates: {
           name: values.name,
           email: values.email,
           phone: values.phone,
-          resumeText: parsedData?.fullText || '',
-          resumeFile: uploadedFile ? {
-          name: uploadedFile.name,
-          type: uploadedFile.type,
-          size: uploadedFile.size,
-          url: URL.createObjectURL(uploadedFile),
-          uploadedAt: new Date().toISOString()
-          } : parsedData?.resumeFile || currentCandidate?.resumeFile
-        }));
-        console.log('✅ [FIXED] Added new candidate');
-        message.success('Information saved successfully!');
-      }
-
-      // Clean state and navigate
-      setTimeout(() => {
-        if (isMounted.current) {
-          setParsedData(null);
-          setUploadedFile(null);
-          setMissingFields([]);
-          setShowWelcomeBack(false);
-          setIsEditMode(false);
-          setCurrentParsedEmail(null);
-          setIsSubmittingForm(false);
-          setCurrentStep(2);
+          resumeText: parsedData?.fullText || currentCandidate.resumeText || '',
+          resumeFile: resumeFileData || currentCandidate.resumeFile
         }
-      }, 300);
-
-    } catch (error) {
-      console.error('❌ [FIXED] Failed to save candidate:', error);
-      message.error('Failed to save information');
-      setIsSubmittingForm(false);
+      }));
+      console.log('✅ [FIXED] Updated existing candidate');
+      message.success('Information updated successfully!');
+    } else {
+      // Add new candidate
+      dispatch(addCandidate({
+        name: values.name,
+        email: values.email,
+        phone: values.phone,
+        resumeText: parsedData?.fullText || '',
+        resumeFile: resumeFileData
+      }));
+      console.log('✅ [FIXED] Added new candidate');
+      message.success('Information saved successfully!');
     }
-  };
 
-  // Start interview process
-  const handleStartInterview = () => {
-    console.log('🚀 [FIXED] Starting interview for:', currentCandidate?.name);
-    message.info('Interview functionality will be implemented in Day 2!');
-  };
+    // Clean state and navigate
+    setTimeout(() => {
+      if (isMounted.current) {
+        setParsedData(null);
+        setUploadedFile(null);
+        setMissingFields([]);
+        setShowWelcomeBack(false);
+        setIsEditMode(false);
+        setCurrentParsedEmail(null);
+        setIsSubmittingForm(false);
+        setCurrentStep(2);
+      }
+    }, 300);
+  } catch (error) {
+    console.error('❌ [FIXED] Failed to save candidate:', error);
+    message.error('Failed to save information');
+    setIsSubmittingForm(false);
+  }
+};
+
+
+const handleStartInterview = async () => {
+  if (!currentCandidate) return;
+  setIsStartingInterview(true);
+
+  try {
+    console.log('🚀 [INTERVIEW] Starting interview for:', currentCandidate.name);
+
+    // 🔧 FIX: Get current subject from Redux (set in dashboard)
+
+    console.log('📚 [INTERVIEW] Using subject:', selectedSubject);
+
+    // Generate questions using Gemini service
+    const easyQuestions = await geminiService.getInterviewQuestions(selectedSubject, 'easy', 2);
+    const mediumQuestions = await geminiService.getInterviewQuestions(selectedSubject, 'medium', 2);
+    const hardQuestions = await geminiService.getInterviewQuestions(selectedSubject, 'hard', 2);
+
+    const allQuestions = [
+      ...easyQuestions.map((q, i) => ({
+        id: `easy_${i}`,
+        question: q,
+        difficulty: 'easy' as const,
+        timeLimit: 20, // 20 seconds
+        subject: selectedSubject
+      })),
+      ...mediumQuestions.map((q, i) => ({
+        id: `medium_${i}`,
+        question: q,
+        difficulty: 'medium' as const,
+        timeLimit: 60, // 1 minute
+        subject: selectedSubject
+      })),
+      ...hardQuestions.map((q, i) => ({
+        id: `hard_${i}`,
+        question: q,
+        difficulty: 'hard' as const,
+        timeLimit: 120, // 2 minutes
+        subject: selectedSubject
+      }))
+    ];
+
+    const interviewSession = {
+      id: uuidv4(),
+      candidateId: currentCandidate.id,
+      candidateName: currentCandidate.name,
+      subject: selectedSubject,
+      questions: allQuestions,
+      answers: [],
+      status: 'in-progress' as const,
+      currentQuestionIndex: 0,
+      timeRemaining: allQuestions[0]?.timeLimit || 120,
+      startedAt: new Date().toISOString(),
+      totalScore: 0,
+      averageScore: 0
+    };
+
+    dispatch(startInterview(interviewSession));
+    message.success(`Starting ${selectedSubject} interview! Good luck!`);
+    
+  } catch (error) {
+    console.error('Failed to start interview:', error);
+    message.error('Failed to start interview. Please try again.');
+  } finally {
+    setIsStartingInterview(false);
+  }
+};
+
 
   // 🔧 FIX: Complete session reset for debugging
   const handleResetSession = () => {
@@ -481,7 +583,68 @@ const IntervieweeChat: React.FC = () => {
     }
   };
 
-  return (
+  return(
+
+        <>
+            {/* ✅ FIX #6: Prevent Re-interview - Check if already completed */}
+            {currentCandidate && currentCandidate.status === 'completed' && (
+            <Card>
+                <Result
+                status="success"
+                title="Interview Already Completed"
+                icon={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                subTitle={
+                    <Space direction="vertical" size="middle" style={{ width: '100%', textAlign: 'center' }}>
+                    <Text>You have already completed your interview.</Text>
+                    {currentCandidate.completedAt && (
+                        <Text type="secondary">
+                        Completed on: {new Date(currentCandidate.completedAt).toLocaleString('en-US', {
+                            month: 'long',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })}
+                        </Text>
+                    )}
+                    <Divider />
+                    <Space direction="vertical" size="small">
+                        <Text strong style={{ fontSize: 18, color: '#1890ff' }}>
+                        Final Score: {currentCandidate.totalScore}/100
+                        </Text>
+                        <Text type="secondary">
+                        Questions Answered: {currentCandidate.answers?.length || 0}/6
+                        </Text>
+                    </Space>
+                    </Space>
+                }
+                extra={[
+                    <Button
+                    key="new"
+                    type="primary"
+                    size="large"
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                        console.log('🔄 Starting fresh interview for new candidate');
+                        dispatch(resetCurrentSession());
+                        setCurrentStep(0);
+                        setParsedData(null);
+                        setUploadedFile(null);
+                        setIsEditMode(false);
+                        form.resetFields();
+                        message.info('Ready for new candidate. Please upload resume.');
+                    }}
+                    >
+                    Start New Interview (New Candidate)
+                    </Button>
+                ]}
+                />
+            </Card>
+            )}
+    {/* Only show interview flow if NOT completed */}
+    {(!currentCandidate || currentCandidate.status !== 'completed') && (
+    <>
+    
     <div style={{ maxWidth: 800, margin: '0 auto', padding: '24px' }}>
       {/* 🔧 FIX: Enhanced Welcome Back Modal with loading states */}
       <Modal
@@ -572,16 +735,18 @@ const IntervieweeChat: React.FC = () => {
               >
                 Start Over
               </Button>
+              {/*}
               {process.env.NODE_ENV === 'development' && (
                 <Button
                   onClick={handleResetSession}
                   type="text"
                   size="small"
                   danger
-                >
+                
                   Debug: Reset All
                 </Button>
-              )}
+                
+              )}>*/}
             </Space>
           </div>
         )}
@@ -768,25 +933,49 @@ const IntervieweeChat: React.FC = () => {
             </Card>
 
             <Space size="middle">
-              <Button
+            <Button
                 type="primary"
                 size="large"
                 icon={<RocketOutlined />}
                 onClick={handleStartInterview}
-              >
-                Start Interview Now
-              </Button>
-              <Button
-                size="large"
-                onClick={handleEditInformation}
-              >
-                Edit Information
-              </Button>
+                loading={isStartingInterview} // ✅ Shows spinner during loading
+                disabled={isStartingInterview} // ✅ Prevents multiple clicks
+                style={{ width: '100%', height: 50, fontSize: 18 }}
+                >
+                {isStartingInterview ? 'Starting Interview...' : 'Start Interview Now'}
+            </Button>
+
+            {/* ✅ ADD: Loading message under button */}
+            {isStartingInterview && (
+                <Alert
+                    message="🚀 Preparing your interview session..."
+                    description="Generating AI-powered questions. This may take 10-15 seconds."
+                    type="info"
+                    showIcon
+                    style={{ marginTop: 16 }}
+                />
+            )}
+            <Button
+            icon={<EditOutlined />}
+            onClick={handleEditInformation}
+            disabled={isInterviewActive || isStartingInterview} // ✅ ADD: Disable during loading too
+            style={{ opacity: (isInterviewActive || isStartingInterview) ? 0.5 : 1 }}
+            >
+            {isInterviewActive 
+                ? 'Interview in Progress' 
+                : isStartingInterview 
+                ? 'Loading Interview...' 
+                : 'Edit Information'
+            }
+            </Button>
             </Space>
           </div>
         )}
       </Card>
     </div>
+    </>
+    )}
+        </>
   );
 };
 

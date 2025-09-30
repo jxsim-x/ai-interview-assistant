@@ -1,6 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { Candidate, CandidatesState } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { resumeStorage } from '../utils/resumeStorage';
 
 const initialState: CandidatesState = {
   list: [],
@@ -104,24 +105,38 @@ const candidatesSlice = createSlice({
       console.log('✅ [UX-ENHANCED] Current candidate cleared');
     },
     
-    // Delete candidate (for testing purposes)
+// In your deleteCandidate reducer:
     deleteCandidate: (state, action: PayloadAction<string>) => {
-      const id = action.payload;
-      state.list = state.list.filter(c => c.id !== id);
-      
-      if (state.currentCandidate?.id === id) {
-        state.currentCandidate = null;
-      }
-      
-      console.log('🗑️ [UX-ENHANCED] Candidate deleted:', id);
-    },
+    const candidateToDelete = state.list.find(c => c.id === action.payload);
     
-    // Clear all candidates (for testing)
-    clearAllCandidates: (state) => {
-      state.list = [];
-      state.currentCandidate = null;
-      console.log('🧹 [UX-ENHANCED] All candidates cleared');
+    // ✅ DELETE RESUME FROM INDEXEDDB
+    if (candidateToDelete?.resumeFile?.storageId) {
+        resumeStorage.deleteResume(candidateToDelete.resumeFile.storageId)
+        .catch(err => console.error('Failed to delete resume from storage:', err));
     }
+    
+    state.list = state.list.filter(c => c.id !== action.payload);
+    
+    if (state.currentCandidate?.id === action.payload) {
+        state.currentCandidate = null;
+    }
+    
+    console.log('🗑️ [CANDIDATES] Deleted candidate:', action.payload);
+    },
+
+    clearAllCandidates: (state) => {
+    // ✅ CLEAR ALL RESUMES FROM INDEXEDDB
+    resumeStorage.clearAll()
+        .catch(err => console.error('Failed to clear resumes from storage:', err));
+        
+    state.list = [];
+    state.currentCandidate = null;
+    console.log('🧹 [CANDIDATES] All candidates cleared');
+    },
+    resetCurrentCandidate: (state) => {
+    state.currentCandidate = null;
+    console.log('🧹 [CANDIDATES] Current candidate cleared');
+    }   
   }
 });
 

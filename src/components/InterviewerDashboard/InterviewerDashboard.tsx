@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Card, 
+  Select,
   Table, 
   Button, 
   Tag, 
@@ -16,7 +17,8 @@ import {
   message,
   Dropdown,
   Alert,
-  MenuProps
+  MenuProps,
+  Input
 } from 'antd';
 import { 
   EyeOutlined, 
@@ -27,13 +29,17 @@ import {
   ClearOutlined,
   DownloadOutlined,
   ExportOutlined,
-  FileTextOutlined
+  FileTextOutlined,
+  WarningOutlined,     
+  CloseCircleOutlined 
 } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState } from '../../store';
 import { Candidate } from '../../types';
 import { deleteCandidate, clearAllCandidates } from '../../store/candidatesSlice';
 import type { ColumnsType } from 'antd/es/table';
+import { setSelectedSubject } from '../../store/interviewSlice';
+import { resumeStorage } from '../../utils/resumeStorage';
 
 const { Title, Text } = Typography;
 
@@ -44,9 +50,21 @@ const InterviewerDashboard: React.FC = () => {
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [selectedResume, setSelectedResume] = useState<string | null>(null);
+  const [selectedSubject, setSelectedSubjectLocal] = useState('React Developer');
+  const [customSubject, setCustomSubject] = useState('');  
+  const [resumeBlobUrl, setResumeBlobUrl] = useState<string | null>(null);
+  
+  
 
   console.log('🎯 [ENHANCED-DASHBOARD] Dashboard loaded with', candidates.length, 'candidates');
-
+    useEffect(() => {
+    // Cleanup blob URLs when component unmounts
+    return () => {
+        if (resumeBlobUrl) {
+        URL.revokeObjectURL(resumeBlobUrl);
+        }
+    };
+    }, [resumeBlobUrl]);
   /**
    * Handle viewing candidate details
    */
@@ -61,25 +79,44 @@ const InterviewerDashboard: React.FC = () => {
 /**
  * ⭐ UPDATED: Handle viewing actual resume file
  */
-    const handleViewResume = (candidate: Candidate) => {
-    console.log('📄 [FILE-PREVIEW] Viewing resume file for:', candidate.name);
-    
-    if (candidate.resumeFile && candidate.resumeFile.url) {
+const handleViewResume = async (candidate: Candidate) => {
+  console.log('📄 [RESUME] Loading resume for:', candidate.name);
+  
+  if (candidate.resumeFile?.storageId) {
+    try {
+      message.loading({ content: 'Loading resume...', key: 'resume-load' });
+      
+      // ✅ Load file from IndexedDB
+      const file = await resumeStorage.getResume(candidate.resumeFile.storageId);
+      
+      if (file) {
+        // ✅ Create blob URL and store separately
+        const blobUrl = URL.createObjectURL(file);
+        setResumeBlobUrl(blobUrl);
         setSelectedCandidate(candidate);
         setResumeModalVisible(true);
-    } else {
-        message.error('Resume file not available for preview');
+        
+        message.success({ content: 'Resume loaded!', key: 'resume-load', duration: 1 });
+      } else {
+        message.error({ content: 'Resume file not found in storage', key: 'resume-load' });
+      }
+    } catch (error) {
+      console.error('❌ [RESUME] Error loading resume:', error);
+      message.error({ content: 'Failed to load resume', key: 'resume-load' });
     }
-    };
+  } else {
+    message.warning('No resume file available for this candidate');
+  }
+};
 
   /**
    * ⭐ NEW: Handle deleting single candidate
    */
-  const handleDeleteCandidate = (candidateId: string, candidateName: string) => {
-    dispatch(deleteCandidate(candidateId));
-    message.success(`Deleted candidate: ${candidateName}`);
-    console.log('🗑️ [ENHANCED-DASHBOARD] Deleted candidate:', candidateName);
-  };
+const handleDeleteCandidate = (candidate: Candidate) => {
+  dispatch(deleteCandidate(candidate.id));
+  message.success(`Deleted candidate: ${candidate.name}`);
+  console.log('🗑️ [DASHBOARD] Deleted candidate:', candidate.name);
+};
 
   /**
    * ⭐ NEW: Handle clearing all candidates
@@ -202,19 +239,27 @@ const InterviewerDashboard: React.FC = () => {
   // ⭐ ENHANCED: Table columns configuration with delete action
   const columns: ColumnsType<Candidate> = [
     {
-      title: 'Candidate',
-      key: 'candidate',
-      render: (_, record: Candidate) => (
-        <Space>
-          <UserOutlined style={{ color: '#1890ff' }} />
-          <div>
-            <div style={{ fontWeight: 600 }}>{record.name}</div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {record.email}
-            </Text>
-          </div>
+    title: 'Candidate',
+    key: 'candidate',
+    render: (_, record: Candidate) => {
+        // ✅ ADD: Check for pasted answers
+        const hasPastedAnswers = record.answers?.some(ans => ans.wasPasted);
+        
+        return (
+        <Space direction="vertical" size={0}>
+            <Space>
+            <Text strong>{record.name}</Text>
+            {/* ✅ ADD: Paste warning badge */}
+            {hasPastedAnswers && (
+                <Tag color="warning" icon={<WarningOutlined />} style={{ margin: 0, fontSize: 11 }}>
+                ⚠️
+                </Tag>
+            )}
+            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>{record.email}</Text>
         </Space>
-      )
+        );
+    }
     },
     {
       title: 'Phone',
@@ -244,75 +289,73 @@ const InterviewerDashboard: React.FC = () => {
       )
     },
     {
-      title: 'Date',
-      key: 'date',
-      render: (_, record: Candidate) => (
-        <div>
-          <div style={{ fontSize: 12 }}>
-            Created: {new Date(record.createdAt).toLocaleDateString()}
-          </div>
-          {record.completedAt && (
-            <div style={{ fontSize: 12, color: '#52c41a' }}>
-              Completed: {new Date(record.completedAt).toLocaleDateString()}
-            </div>
-          )}
-        </div>
-      )
-    },
-    {
-    title: 'Resume',
-    key: 'resume', 
-    width: 100,
-      render: (_, record: Candidate) => {
-        const hasFile = record.resumeFile && record.resumeFile.url;
-        const isPDF = record.resumeFile?.type === 'application/pdf';
-        
+        title: 'Date', // ✅ UPDATED COLUMN
+        dataIndex: 'createdAt',
+        key: 'createdAt',
+        sorter: (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        render: (createdAt: string) => {
+        const date = new Date(createdAt);
+        // ✅ Format: Sep 30, 2025 14:35
+        const dateStr = date.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric', 
+            year: 'numeric' 
+        });
+        const timeStr = date.toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+        });
         return (
-          <Button
-            type="link"
-            size="small"
-            icon={<FileTextOutlined />}
-            onClick={() => handleViewResume(record)}
-            disabled={!hasFile}
-          >
-            {hasFile ? `${isPDF ? 'PDF' : 'DOCX'} Preview` : 'No File'}
-          </Button>
+            <Space direction="vertical" size={0}>
+            <Text>{dateStr}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+                <ClockCircleOutlined /> {timeStr}
+            </Text>
+            </Space>
         );
-      }
-
+        }
     },
 
+
     {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record: Candidate) => (
+    title: 'Actions',
+    key: 'actions',
+    render: (_, record: Candidate) => (
         <Space>
-          <Button
-            type="primary"
-            size="small"
+        <Button
             icon={<EyeOutlined />}
             onClick={() => handleViewDetails(record)}
-          >
-            View
-          </Button>
-          <Popconfirm
-            title="Delete Candidate"
-            description={`Are you sure you want to delete ${record.name}?`}
-            onConfirm={() => handleDeleteCandidate(record.id, record.name)}
-            okText="Yes, Delete"
-            cancelText="Cancel"
-            okButtonProps={{ danger: true }}
-          >
+            size="small"
+        >
+            Details
+        </Button>
+        
+        {/* ✅ FIXED: Check for storageId instead of url */}
+        {record.resumeFile?.storageId && (
             <Button
-              size="small"
-              icon={<DeleteOutlined />}
-              danger
+            icon={<FileTextOutlined />}
+            onClick={() => handleViewResume(record)}
+            size="small"
             >
-              Delete
+            Resume
             </Button>
-          </Popconfirm>
+        )}
+        
+        <Popconfirm
+        title="Delete this candidate?"
+        description="This action cannot be undone."
+        onConfirm={() => handleDeleteCandidate(record)} // ✅ Pass entire record
+        okText="Yes, delete"
+        cancelText="Cancel"
+        okButtonProps={{ danger: true }}
+        >
+        <Button danger icon={<DeleteOutlined />} size="small">
+            Delete
+        </Button>
+        </Popconfirm>
         </Space>
-      )
+    )
     }
   ];
 
@@ -398,7 +441,86 @@ const InterviewerDashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
-
+{/* ADD this entire card before your existing candidates table */}
+    <Card title="🎯 Interview Configuration" style={{ marginBottom: 24 }}>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+            <Text strong style={{ fontSize: 16 }}>Interview Subject:</Text>
+            <Select
+                size="large"
+                style={{ width: '100%', marginTop: 8 }}
+                value={selectedSubject}
+                onChange={(value) => {
+                setSelectedSubjectLocal(value);
+                if (value !== 'Custom Subject') {
+                    dispatch(setSelectedSubject(value));
+                }
+                }}
+                options={[
+                { label: '⚛️ React Developer', value: 'React Developer' },
+                { label: '🟢 Node.js Developer', value: 'Node.js Developer' },
+                { label: '🐍 Python Developer', value: 'Python Developer' },
+                { label: '📊 Data Scientist', value: 'Data Scientist' },
+                { label: '📱 Product Manager', value: 'Product Manager' },
+                { label: '🎨 UI/UX Designer', value: 'UI/UX Designer' },
+                { label: '✨ Custom Subject', value: 'Custom Subject' }
+                ]}
+            />
+            
+            {/* 🔧 FIX: Add custom subject input field */}
+            {selectedSubject === 'Custom Subject' && (
+                <Space.Compact style={{ width: '100%', marginTop: 12 }}>
+                <Input
+                    size="large"
+                    placeholder="Enter custom subject (e.g., Full Stack, DevOps, etc.)"
+                    value={customSubject}
+                    onChange={(e) => setCustomSubject(e.target.value)}
+                    onPressEnter={() => {
+                    if (customSubject.trim()) {
+                        dispatch(setSelectedSubject(customSubject.trim()));
+                        message.success(`Custom subject set: ${customSubject.trim()}`);
+                    }
+                    }}
+                />
+                <Button 
+                size="large" 
+                type="primary"
+                onClick={() => {
+                    if (customSubject.trim()) {
+                    dispatch(setSelectedSubject(customSubject.trim()));
+                    
+                    // ✅ REPLACE message.success with Modal.success
+                    Modal.success({
+                        title: '✅ Subject Set Successfully',
+                        content: `Custom subject "${customSubject.trim()}" has been configured for new interviews.`,
+                        okText: 'Close',
+                        centered: true,
+                        closable: true, // ✅ Adds X button
+                        maskClosable: true
+                    });
+                    } else {
+                    message.error('Please enter a custom subject');
+                    }
+                }}
+                >
+                Set Subject
+                </Button>
+                </Space.Compact>
+            )}
+            </div>
+            
+            <Alert
+            message={
+                <Space direction="vertical" size="small">
+                <div><Text strong>Question Structure:</Text> Easy: 2 × 20sec • Medium: 2 × 60sec • Hard: 2 × 120sec</div>
+                <div><Text strong>Interview Duration:</Text> 📅 ~400 seconds maximum</div>
+                <div><Text type="secondary">Powered by Gemini 2.5 Flash model</Text></div>
+                </Space>
+            }
+            type="info"
+            />
+        </Space>
+    </Card>
       {/* ⭐ ENHANCED: Candidates Table with Delete Actions */}
       <Card 
         title="Interview Results" 
@@ -472,18 +594,42 @@ const InterviewerDashboard: React.FC = () => {
             {selectedCandidate.answers.length > 0 ? (
               <Card title="Interview Responses" size="small">
                 <Space direction="vertical" style={{ width: '100%' }}>
-                  {selectedCandidate.answers.map((answer, index) => (
-                    <Card key={index} size="small" style={{ backgroundColor: '#fafafa' }}>
-                      <Text strong>Q{index + 1}: {answer.question}</Text>
-                      <div style={{ marginTop: 8 }}>
-                        <Text>Answer: {answer.answer}</Text>
-                      </div>
-                      <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>
-                        <Text>Score: <Tag color={getScoreColor(answer.score)}>{answer.score}%</Tag></Text>
-                        <Text type="secondary">Time: {answer.timeUsed}s / {answer.maxTime}s</Text>
-                      </div>
-                    </Card>
-                  ))}
+                {selectedCandidate.answers.map((answer, index) => (
+                <div key={index} style={{ 
+                    marginBottom: 8, 
+                    padding: 12, 
+                    background: answer.wasPasted ? '#fff7e6' : '#fafafa', // ✅ Highlight if pasted
+                    borderRadius: 4,
+                    border: answer.wasPasted ? '1px solid #ffa940' : 'none' // ✅ Orange border if pasted
+                }}>
+                    <Text strong>Q{index + 1}: {answer.question}</Text>
+                    <br />
+                    <Text>Answer: {answer.answer || '(No answer provided)'}</Text>
+                    <br />
+                    <Space wrap>
+                    <Tag color={answer.score >= 70 ? 'green' : answer.score >= 40 ? 'orange' : 'red'}>
+                        Score: {answer.score}%
+                    </Tag>
+                    <Tag icon={<ClockCircleOutlined />}>
+                        Time: {answer.timeUsed}s / {answer.maxTime}s
+                    </Tag>
+                    
+                    {/* ✅ FIX #7: Paste Detection Display */}
+                    {answer.wasPasted && (
+                        <Tag color="warning" icon={<WarningOutlined />}>
+                        ⚠️ Paste Detected ({answer.pasteCount || 1}×)
+                        </Tag>
+                    )}
+                    
+                    {/* ✅ BONUS: Blank Answer Detection */}
+                    {(!answer.answer || answer.answer.trim().length === 0) && (
+                        <Tag color="red" icon={<CloseCircleOutlined />}>
+                        ❌ No Answer
+                        </Tag>
+                    )}
+                    </Space>
+                </div>
+                ))}
                 </Space>
               </Card>
             ) : (
@@ -496,85 +642,49 @@ const InterviewerDashboard: React.FC = () => {
           </Space>
         )}
       </Modal>
-{/* ⭐ NEW: Resume Preview Modal */}
-{/* ⭐ ENHANCED: Resume Preview Modal with Original Formatting */}
+
         {/* ⭐ UPDATED: Resume File Preview Modal */}
         <Modal
-          title={`Resume Preview - ${selectedCandidate?.name}`}
-          open={resumeModalVisible}
-          onCancel={() => setResumeModalVisible(false)}
-          footer={[
+        title={`Resume - ${selectedCandidate?.name || 'Candidate'}`}
+        open={resumeModalVisible}
+        onCancel={() => {
+            // ✅ CLEANUP: Revoke blob URL to free memory
+            if (resumeBlobUrl) {
+            URL.revokeObjectURL(resumeBlobUrl);
+            setResumeBlobUrl(null);
+            }
+            setResumeModalVisible(false);
+            setSelectedCandidate(null);
+        }}
+        footer={[
             <Button 
-              key="download" 
-              icon={<DownloadOutlined />}
-              onClick={() => {
-                if (selectedCandidate?.resumeFile?.url) {
-                  const link = document.createElement('a');
-                  link.href = selectedCandidate.resumeFile.url;
-                  link.download = selectedCandidate.resumeFile.name;
-                  link.click();
+            key="close" 
+            onClick={() => {
+                if (resumeBlobUrl) {
+                URL.revokeObjectURL(resumeBlobUrl);
+                setResumeBlobUrl(null);
                 }
-              }}
+                setResumeModalVisible(false);
+                setSelectedCandidate(null);
+            }}
             >
-              Download
-            </Button>,
-            <Button key="close" onClick={() => setResumeModalVisible(false)}>
-              Close
+            Close
             </Button>
-          ]}
-          width="90%"
-          style={{ top: 20, maxWidth: '1200px' }}
+        ]}
+        width="80%"
+        style={{ top: 20 }}
         >
-          {selectedCandidate?.resumeFile ? (
-            <div style={{ height: '80vh' }}>
-              {selectedCandidate.resumeFile.type === 'application/pdf' ? (
-                // PDF Preview using iframe
-                <iframe
-                  src={selectedCandidate.resumeFile.url}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                    borderRadius: '4px'
-                  }}
-                  title="Resume Preview"
-                />
-              ) : (
-                // DOCX Preview (fallback to text)
-                <div style={{ 
-                  padding: '20px', 
-                  backgroundColor: '#f9f9f9', 
-                  borderRadius: '4px',
-                  height: '100%',
-                  overflow: 'auto'
-                }}>
-                  <Alert
-                    message="DOCX Preview"
-                    description="Word document preview is limited in browsers. Click Download to view the full document."
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: '16px' }}
-                  />
-                  <div style={{
-                    fontFamily: 'Times, "Times New Roman", serif',
-                    fontSize: '12px',
-                    lineHeight: '1.4',
-                    color: '#333',
-                    whiteSpace: 'pre-wrap',
-                    wordWrap: 'break-word',
-                    backgroundColor: 'white',
-                    padding: '20px',
-                    borderRadius: '4px'
-                  }}>
-                    {selectedCandidate.resumeText || 'Preview not available for this document format.'}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <Empty description="No resume file available" />
-          )}
+        {resumeBlobUrl ? (
+            <iframe
+            src={resumeBlobUrl}
+            style={{ width: '100%', height: '75vh', border: 'none' }}
+            title="Resume Preview"
+            />
+        ) : (
+            <Empty description="No resume to display" />
+        )}
         </Modal>
+
 
     </div>
   );
