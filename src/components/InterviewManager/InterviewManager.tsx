@@ -74,7 +74,13 @@ const InterviewManager: React.FC = () => {
     };
   }, [isActive, isPaused, currentSession?.timeRemaining, dispatch]);
 
-
+// 🔧 FIX: Auto-resume if interview was left paused after reload
+useEffect(() => {
+  if (currentSession && isActive && isPaused) {
+    console.log('🔧 [FIX] Detected paused state on mount - auto-resuming');
+    dispatch(resumeInterview());
+  }
+}, [currentSession, isActive, isPaused, dispatch]);
 
 
   const handleTimeUp = async () => {
@@ -323,7 +329,7 @@ const submitCurrentAnswer = async () => {
         style={{ marginBottom: 16 ,textAlign: 'left'}}
       >
         <Paragraph style={{ fontSize: 16, lineHeight: 1.6 }}>
-          {currentQuestion.question}
+          {currentQuestion.question} 
         </Paragraph>
       </Card>
 
