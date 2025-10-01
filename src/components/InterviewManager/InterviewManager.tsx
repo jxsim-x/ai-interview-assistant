@@ -75,17 +75,7 @@ const InterviewManager: React.FC = () => {
   }, [isActive, isPaused, currentSession?.timeRemaining, dispatch]);
 
 
-  useEffect(() => {
-  const handleSwitchTab = () => {
-    setActiveTab('1'); // Switch to Interviewee Chat
-  };
-  
-  window.addEventListener('switchToIntervieweeTab', handleSwitchTab);
-  
-  return () => {
-    window.removeEventListener('switchToIntervieweeTab', handleSwitchTab);
-  };
-}, []);
+
 
   const handleTimeUp = async () => {
     message.warning('⏰ Time is up! Auto-submitting your answer.');
@@ -117,33 +107,22 @@ const InterviewManager: React.FC = () => {
 
 const submitCurrentAnswer = async () => {
   if (!currentSession) return;
-  
-  console.log('📝 [SUBMIT] Starting submission process...');
-  console.log('   Current question index:', currentSession.currentQuestionIndex);
-  console.log('   Total questions:', currentSession.questions.length);
-  
-  // ✅ CRITICAL: Calculate this BEFORE any async operations
-  const isLastQuestion = currentSession.currentQuestionIndex + 1 >= currentSession.questions.length;
-  console.log('   Is last question?', isLastQuestion);
-  
-  // ✅ FREEZE TIMER IMMEDIATELY
+
   setIsSubmitting(true);
   setShowSubmitModal(false);
-  
-  // ✅ Stop the timer by pausing interview
+
+  // Pause timer immediately for submission
   dispatch(pauseInterview());
-  
-  // ✅ Show submission feedback
+
   message.loading({
     content: '⏳ Submitting your answer and calculating score...',
     key: 'submitAnswer',
-    duration: 0
+    duration: 0,
   });
 
   try {
     const currentQuestion = currentSession.questions[currentSession.currentQuestionIndex];
 
-    // Get AI score
     const score = await geminiService.scoreAnswer(
       currentQuestion.question,
       answer.trim(),
@@ -159,136 +138,62 @@ const submitCurrentAnswer = async () => {
       timeUsed: currentQuestion.timeLimit - currentSession.timeRemaining,
       maxTime: currentQuestion.timeLimit,
       timestamp: new Date().toISOString(),
-      wasPasted: wasPasted, 
-      pasteCount: pasteCount 
+      wasPasted: wasPasted,
+      pasteCount: pasteCount,
     };
-    
+
+    // Reset paste detection for next question
     setWasPasted(false);
     setPasteCount(0);
 
-    // Submit answer to Redux
     dispatch(submitAnswer(answerData));
-    
-    // ✅ Resume timer for next question (ONLY if not last)
-    if (!isLastQuestion) {
-      dispatch(resumeInterview());
-    }
-    
-    setAnswer('');
-
-    // ✅ Dismiss loading and show success
     message.destroy('submitAnswer');
-    
-    const scoreMessage = score >= 80 ? 'Excellent answer! 🌟' :
-      score >= 60 ? 'Good answer! 👍' :
-      score >= 40 ? 'Fair answer. 👌' : 'Needs improvement. 💪';
 
-    message.success(`${scoreMessage} Score: ${score}/100`, 3);
+    const isLastQuestion = currentSession.currentQuestionIndex + 1 >= currentSession.questions.length;
 
-    // ✅ CRITICAL: Handle completion BEFORE finally block
     if (isLastQuestion) {
-      console.log('🎯 [COMPLETION] This was the LAST question!');
-      console.log('   Preparing to complete interview...');
-      
       const allAnswers = [...currentSession.answers, answerData];
       const finalTotalScore = allAnswers.reduce((sum, ans) => sum + ans.score, 0);
       const finalAverageScore = Math.round(finalTotalScore / allAnswers.length);
 
-      console.log('   Final score:', finalAverageScore);
-      console.log('   Total answers:', allAnswers.length);
-
-      // ✅ Wait for score message to show, then complete
-      setTimeout(() => {
-        console.log('✅ [COMPLETION] Dispatching completeInterview action...');
-        dispatch(completeInterview());
-        
-        if (currentSession.candidateId) {
-          console.log('✅ [COMPLETION] Updating candidate record...');
-          dispatch(updateCandidate({
-            id: currentSession.candidateId,
-            updates: {
-              status: 'completed',
-              totalScore: finalAverageScore,
-              answers: allAnswers,
-              completedAt: new Date().toISOString()
-            }
-          }));
-        }
-
-        console.log('🎉 [COMPLETION] Showing completion modal...');
-        
-        // ✅ SHOW COMPLETION MODAL
-        Modal.success({
-          title: '🎉 Interview Completed Successfully!',
-          content: (
-            <div style={{ padding: '10px 0' }}>
-              <p style={{ fontSize: 15, marginBottom: 16 }}>
-                <strong>Congratulations!</strong> You have successfully completed the interview.
-              </p>
-              
-              <Divider style={{ margin: '12px 0' }} />
-              
-              <Space direction="vertical" style={{ width: '100%' }} size="small">
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Text strong>📊 Final Score:</Text>
-                  <Tag color={finalAverageScore >= 80 ? 'green' : finalAverageScore >= 60 ? 'blue' : 'orange'} 
-                       style={{ fontSize: 18, padding: '4px 12px' }}>
-                    {finalAverageScore}/100
-                  </Tag>
-                </div>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Text>📝 Questions Answered:</Text>
-                  <Text strong>{allAnswers.length}/6</Text>
-                </div>
-              </Space>
-              
-              <Divider style={{ margin: '12px 0' }} />
-              
-              <p style={{ color: '#52c41a', fontSize: 15, marginBottom: 8 }}>
-                ✨ <strong>Thank you for attending the interview!</strong>
-              </p>
-              <p style={{ color: '#666', fontSize: 13, marginBottom: 0 }}>
-                Your responses have been saved and will be reviewed by our team. We will contact you soon regarding the next steps.
-              </p>
-            </div>
-          ),
-          width: 550,
-          okText: 'Finish',
-          centered: true,
-          maskClosable: false,
-          keyboard: false,
-          onOk: () => {
-            console.log('✅ [REDIRECT] User clicked Finish - Switching to Interviewee Chat');
-            window.dispatchEvent(new CustomEvent('switchToIntervieweeTab'));
+      if (currentSession.candidateId) {
+        dispatch(updateCandidate({
+          id: currentSession.candidateId,
+          updates: {
+            status: 'completed',
+            totalScore: finalAverageScore,
+            answers: allAnswers,
+            completedAt: new Date().toISOString(),
           },
-          onCancel: () => {
-            console.log('✅ [REDIRECT] Modal closed - Switching to Interviewee Chat');
-            window.dispatchEvent(new CustomEvent('switchToIntervieweeTab'));
-          }
-        });
-      }, 1500); // Wait 1.5s for score message
-    }
+        }));
+      }
 
-  } catch (error) {
-    // ✅ ERROR HANDLING
-    message.destroy('submitAnswer');
-    console.error('❌ [ERROR] Failed to submit answer:', error);
-    message.error('Failed to submit answer. Please try again.');
-    
-    // Resume timer on error
-    dispatch(resumeInterview());
-    
-  } finally {
-    // ✅ ONLY reset isSubmitting if NOT last question
-    // (Last question keeps button disabled permanently)
-    if (!isLastQuestion) {
-      setIsSubmitting(false);
+      dispatch(completeInterview());
+
+      setTimeout(() => {
+        alert(`🎉 Interview Completed!\n\nFinal Score: ${finalAverageScore}/100\nQuestions Answered: ${allAnswers.length}/6\n\nThank you for attending the interview!`);
+        window.dispatchEvent(new CustomEvent('switchToIntervieweeTab'));
+      }, 300);
     } else {
-      console.log('🔒 [COMPLETION] Keeping submit button disabled (interview completed)');
+      message.success({
+        content: `✅ Answer submitted! Score: ${answerData.score}/100`,
+        duration: 2,
+      });
+
+      setAnswer('');
+      dispatch(resumeInterview());
     }
+  } catch (error) {
+    message.destroy('submitAnswer');
+    console.error('❌ [INTERVIEW] Failed to submit answer:', error);
+    message.error('Failed to submit answer. Please try again.');
+    dispatch(resumeInterview());
+  } finally {
+    setIsSubmitting(false);
   }
 };
+
+
   const handlePauseResume = () => {
     if (isPaused) {
       dispatch(resumeInterview());
@@ -415,7 +320,7 @@ const submitCurrentAnswer = async () => {
             <Text>Interview Question</Text>
           </Space>
         } 
-        style={{ marginBottom: 16 }}
+        style={{ marginBottom: 16 ,textAlign: 'left'}}
       >
         <Paragraph style={{ fontSize: 16, lineHeight: 1.6 }}>
           {currentQuestion.question}
@@ -489,7 +394,4 @@ const submitCurrentAnswer = async () => {
 };
 
 export default InterviewManager;
-function setActiveTab(arg0: string) {
-    throw new Error('Function not implemented.');
-}
 

@@ -955,19 +955,19 @@ const handleStartInterview = async () => {
                     style={{ marginTop: 16 }}
                 />
             )}
-            <Button
-            icon={<EditOutlined />}
-            onClick={handleEditInformation}
-            disabled={isInterviewActive || isStartingInterview} // ✅ ADD: Disable during loading too
-            style={{ opacity: (isInterviewActive || isStartingInterview) ? 0.5 : 1 }}
-            >
-            {isInterviewActive 
-                ? 'Interview in Progress' 
-                : isStartingInterview 
-                ? 'Loading Interview...' 
-                : 'Edit Information'
-            }
-            </Button>
+        <Button
+        icon={<EditOutlined />}
+        onClick={handleEditInformation}
+        disabled={isInterviewActive || isStartingInterview} // ✅ ADD: Disable during loading too
+        style={{ opacity: (isInterviewActive || isStartingInterview) ? 0.5 : 1 }}
+        >
+        {isInterviewActive 
+            ? 'Interview in Progress' 
+            : isStartingInterview 
+            ? 'Loading Interview...' 
+            : 'Edit Information'
+        }
+        </Button>
             </Space>
           </div>
         )}
