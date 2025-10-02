@@ -394,24 +394,24 @@ export class ResumeParser {
    * ⭐ ENHANCED: Better name validation
    */
   private static isValidNameCandidate(text: string): boolean {
-    if (!text || text.length < 2 || text.length > 50) return false;
+    if (!text || text.length < 2 || text.length > 60) return false;
     
     const words = text.trim().split(/\s+/);
     
     // Should have 2-4 words
-    if (words.length < 2 || words.length > 4) return false;
+    if (words.length < 2 || words.length > 6) return false;
     
     // Each word validation
     for (const word of words) {
-      if (word.length < 2 || word.length > 20) return false;
+      if (word.length < 1 || word.length > 30) return false;
       if (!/^[A-Za-z.''-]+$/.test(word)) return false; // Allow apostrophes and hyphens
     }
     
     // First word should start with capital
-    if (!/^[A-Z]/.test(words[0])) return false;
+    if (!/^[A-Za-z]/.test(words[0])) return false;
     
     // Should not be all caps (unless 2 words)
-    if (words.length > 2 && text === text.toUpperCase()) return false;
+    //if (words.length > 2 && text === text.toUpperCase()) return false;
     
     return true;
   }

@@ -82,6 +82,13 @@ useEffect(() => {
   }
 }, [currentSession, isActive, isPaused, dispatch]);
 
+useEffect(() => {
+  if (currentSession?.candidateId) {
+    setAnswer('');
+    console.log('🔄 [FIX] Answer field cleared for new candidate:', currentSession.candidateName);
+  }
+}, [currentSession?.candidateId]);
+
 
   const handleTimeUp = async () => {
     message.warning('⏰ Time is up! Auto-submitting your answer.');
@@ -108,6 +115,7 @@ useEffect(() => {
       message.error('Please provide an answer before submitting.');
       return;
     }
+     dispatch(pauseInterview());
     setShowSubmitModal(true);
   };
 
@@ -118,7 +126,7 @@ const submitCurrentAnswer = async () => {
   setShowSubmitModal(false);
 
   // Pause timer immediately for submission
-  dispatch(pauseInterview());
+ // dispatch(pauseInterview());
 
   message.loading({
     content: '⏳ Submitting your answer and calculating score...',

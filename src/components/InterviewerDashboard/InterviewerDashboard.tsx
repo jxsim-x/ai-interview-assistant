@@ -40,6 +40,7 @@ import { deleteCandidate, clearAllCandidates } from '../../store/candidatesSlice
 import type { ColumnsType } from 'antd/es/table';
 import { setSelectedSubject } from '../../store/interviewSlice';
 import { resumeStorage } from '../../utils/resumeStorage';
+import { resetInterview } from '../../store/interviewSlice';
 
 const { Title, Text } = Typography;
 
@@ -123,6 +124,7 @@ const handleDeleteCandidate = (candidate: Candidate) => {
    */
   const handleClearAllCandidates = () => {
     dispatch(clearAllCandidates());
+    dispatch(resetInterview());
     message.success('All candidates cleared successfully');
     console.log('🧹 [ENHANCED-DASHBOARD] All candidates cleared');
   };

@@ -41,6 +41,8 @@ const interviewSlice = createSlice({
           // Set time for next question
           const nextQuestion = state.currentSession.questions[state.currentSession.currentQuestionIndex];
           state.currentSession.timeRemaining = nextQuestion.timeLimit;
+          state.isPaused = false;
+          state.currentSession.status = 'in-progress';
         }
       }
     },
@@ -111,6 +113,8 @@ completeInterview: (state) => {
             state.currentSession = null;
             state.isActive = false;
             state.isPaused = false;
+            state.selectedSubject = 'React Developer';
+            console.log('🔄 [INTERVIEW] Subject reset to default: React Developer');
         }
     },
 
@@ -123,6 +127,7 @@ completeInterview: (state) => {
       state.currentSession = null;
       state.isActive = false;
       state.isPaused = false;
+      state.selectedSubject = 'React Developer';
       console.log('🔄 [INTERVIEW] Interview reset');
     }
   },
