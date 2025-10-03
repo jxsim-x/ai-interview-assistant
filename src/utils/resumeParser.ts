@@ -208,10 +208,8 @@ export class ResumeParser {
     candidates.push(...patternCandidates);
     
     // Score and select best candidate
-    const bestCandidate = this.selectBestNameCandidate(candidates);
-    
+    const bestCandidate = this.selectBestNameCandidate(candidates, lines, textItems); // ✅ ADD lines, textItems
     console.log('🏆 [ADVANCED-PARSER] Best candidate selected:', bestCandidate);
-    
     return bestCandidate;
   }
 
@@ -355,16 +353,16 @@ export class ResumeParser {
   /**
    * ⭐ NEW: Select best name candidate using scoring
    */
-  private static selectBestNameCandidate(candidates: NameCandidate[]): {name: string; confidence: number; source: string} {
+  private static selectBestNameCandidate(candidates: NameCandidate[], lines: string[], textItems: TextItem[]): {name: string; confidence: number; source: string} {
     if (candidates.length === 0) {
-      return { name: '', confidence: 0, source: 'no-candidates-found' };
+      console.warn('⚠️ [ADVANCED-PARSER] No candidates found, using fallback strategy...');
+      return this.ultimateFallbackName(lines, textItems);
     }
-    
+
     // Remove duplicates and calculate final scores
     const uniqueCandidates = candidates.reduce((acc, current) => {
       const existing = acc.find(c => c.text.toLowerCase() === current.text.toLowerCase());
       if (existing) {
-        // Combine scores for duplicate candidates
         existing.score += current.score * 0.5;
         existing.confidence = Math.max(existing.confidence, current.confidence);
         existing.source += ` + ${current.source}`;
@@ -373,15 +371,14 @@ export class ResumeParser {
       }
       return acc;
     }, [] as NameCandidate[]);
-    
-    // Sort by score and confidence
+
     uniqueCandidates.sort((a, b) => (b.score * b.confidence) - (a.score * a.confidence));
-    
+
     console.log('🏆 [ADVANCED-PARSER] Top 3 candidates:');
     uniqueCandidates.slice(0, 3).forEach((candidate, index) => {
       console.log(`  ${index + 1}. "${candidate.text}" (score: ${candidate.score.toFixed(1)}, confidence: ${candidate.confidence.toFixed(2)}, source: ${candidate.source})`);
     });
-    
+
     const winner = uniqueCandidates[0];
     return {
       name: winner.text,
@@ -391,8 +388,81 @@ export class ResumeParser {
   }
 
   /**
-   * ⭐ ENHANCED: Better name validation
+   * 🆘 ULTIMATE FALLBACK: Extract top heading when all else fails
    */
+  private static ultimateFallbackName(lines: string[], textItems: TextItem[]): {name: string; confidence: number; source: string} {
+    console.log('🆘 [FALLBACK] Attempting ultimate fallback name extraction...');
+    
+    // STRATEGY 1: Use largest font text (if PDF with positioning data)
+    if (textItems.length > 0) {
+      const sortedByFontSize = [...textItems]
+        .filter((item: any) => item.str && item.str.trim().length > 0)
+        .sort((a: any, b: any) => (b.fontSize || 12) - (a.fontSize || 12));
+      
+      for (let i = 0; i < Math.min(5, sortedByFontSize.length); i++) {
+        const text = sortedByFontSize[i].str.trim();
+        const words = text.split(/\s+/);
+        
+        // Take largest text that looks remotely like a name (2-5 words, mostly letters)
+        if (words.length >= 2 && words.length <= 5 && 
+            words.every(w => /^[A-Za-z'-]+$/.test(w))) {
+          const fallbackName = this.cleanNameString(text);
+          console.log(`✅ [FALLBACK] Using largest font text: "${fallbackName}"`);
+          return {
+            name: fallbackName,
+            confidence: 0.4,
+            source: 'fallback-largest-font'
+          };
+        }
+      }
+    }
+    
+    // STRATEGY 2: Use first non-empty line (classic fallback)
+    for (let i = 0; i < Math.min(3, lines.length); i++) {
+      const line = lines[i].trim();
+      
+      // Skip obvious non-names
+      if (line.includes('@') || line.includes('http') || /\d{10}/.test(line)) {
+        continue;
+      }
+      
+      const words = line.split(/\s+/);
+      
+      // Take first line with 2-5 words
+      if (words.length >= 2 && words.length <= 5) {
+        const fallbackName = this.cleanNameString(line);
+        console.log(`✅ [FALLBACK] Using line ${i + 1}: "${fallbackName}"`);
+        return {
+          name: fallbackName,
+          confidence: 0.3,
+          source: `fallback-line-${i + 1}`
+        };
+      }
+    }
+    
+    // STRATEGY 3: Absolute last resort - take first line regardless
+    if (lines.length > 0) {
+      const firstLine = this.cleanNameString(lines[0]);
+      console.log(`⚠️ [FALLBACK] Absolute last resort: "${firstLine}"`);
+      return {
+        name: firstLine,
+        confidence: 0.2,
+        source: 'fallback-absolute-first-line'
+      };
+    }
+    
+    // Complete failure
+    console.error('❌ [FALLBACK] All strategies failed - no text found');
+    return {
+      name: '',
+      confidence: 0,
+      source: 'complete-failure'
+    };
+  }
+
+/**
+ * ⭐ ENHANCED: Better name validation
+ */
   private static isValidNameCandidate(text: string): boolean {
     if (!text || text.length < 2 || text.length > 60) return false;
     
